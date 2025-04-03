@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CEJST Data Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Climate and Economic Justice Screening Tool Analysis</h1>
+        
+        <form id="analysis-form">
+            <div class="form-group">
+                <label for="state">State/Territory:</label>
+                <input type="text" id="state" name="state" placeholder="e.g., Alabama">
+            </div>
+            
+            <div class="form-group">
+                <label for="county">County:</label>
+                <input type="text" id="county" name="county" placeholder="e.g., Autauga County">
+            </div>
+            
+            <div class="form-group">
+                <label for="tract-id">Census Tract ID:</label>
+                <input type="text" id="tract-id" name="tract-id" placeholder="e.g., 01001020100">
+            </div>
+            
+            <div class="form-group">
+                <label for="query">Analysis Query:</label>
+                <textarea id="query" name="query" rows="4" required 
+                    placeholder="What would you like to know about this data? e.g., 'Analyze the disadvantaged status of this community'"></textarea>
+            </div>
+            
+            <button type="submit">Analyze Data</button>
+        </form>
+        
+        <div id="analysis-results"></div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
