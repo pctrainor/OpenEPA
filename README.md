@@ -1,7 +1,4 @@
 # OpenEPA
-A repository for bridging the gap between CEJST dataset and user-initiated, model-driven analysis of various demographic questions.
-
-# OpenEPA
 
 An open-source tool designed to bridge the gap between the complex Climate and Economic Justice Screening Tool (CEJST) dataset and users seeking clear answers to demographic and environmental justice questions. OpenEPA allows users to query CEJST data using natural language and receive concise, AI-driven analyses.
 
