@@ -6,7 +6,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import json
 import traceback # Import traceback for better error logging
-import re # Import regex - might be useful later
+import re # Import regex for potentially filtering common words
 
 # Load environment variables
 load_dotenv()
@@ -43,29 +43,6 @@ try:
 except Exception as e:
     print(f"CRITICAL Error initializing OpenAI client: {e}")
 
-# --- Helper Function for Safe Averaging (WITH DEBUG PRINTS) ---
-def calculate_safe_average(dataframe, column_name, is_percentage=True):
-    """Calculates mean for a numeric column, handles missing data/types."""
-    if column_name in dataframe.columns:
-        if pd.api.types.is_numeric_dtype(dataframe[column_name]):
-            valid_data = dataframe[column_name].dropna()
-            if not valid_data.empty:
-                avg = valid_data.mean()
-                multiplier = 100 if is_percentage and avg <= 1 and avg >= 0 else 1 # Added avg >= 0 check
-
-                # --- DEBUG PRINTS ---
-                print(f"DEBUG avg_calc: Col='{column_name}', Raw Avg={avg:.4f}, is_percentage={is_percentage}, Multiplier={multiplier}")
-                # --- END DEBUG ---
-
-                result = round(avg * multiplier, 1)
-                return result
-            else:
-                print(f"DEBUG avg_calc: Col='{column_name}' - No valid data after dropna.")
-        else:
-             print(f"Warning: Column '{column_name}' not numeric, cannot average.")
-    else:
-         print(f"Warning: Column '{column_name}' not found.")
-    return None # Return None if calculation fails
 # --- Flask Routes ---
 @app.route('/')
 def index():
@@ -74,11 +51,18 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    """Handles the analysis request with two-step LLM process."""
+    """
+    Handles the analysis request:
+    1. Filters data based on user input.
+    2. Calculates summary statistics for the filtered data.
+    3. Uses Step 1 LLM call to analyze the user query intent and map to available stats.
+    4. Uses Step 2 LLM call to generate a concise analysis based on query intent and stats.
+    """
+    # Initial checks
     if df is None or df.empty:
-        return jsonify({"error": "Dataset not loaded on server."}), 500
+        return jsonify({"error": "Dataset not loaded or empty on server. Check server logs."}), 500
     if not client:
-        return jsonify({"error": "OpenAI client not configured on server."}), 500
+        return jsonify({"error": "OpenAI client not configured on server. Check server logs."}), 500
 
     try:
         request_data = request.get_json()
@@ -96,181 +80,221 @@ def analyze():
         # --- Filtering Logic ---
         print(f"Starting filtering with state='{state}', county='{county}', tract_id='{tract_id}'")
         filtered_df = df.copy()
-        # (Filtering logic remains the same - ensure it's robust)
+
         available_states = df['State/Territory'].unique().tolist()
         if state:
-            state_strip = state.lower().strip(); filtered_df = filtered_df[filtered_df['State/Territory'].str.lower() == state_strip]
-            if filtered_df.empty: return jsonify({"analysis": f"No data found for state: '{state}'."})
+            state_strip = state.lower().strip()
+            filtered_df = filtered_df[filtered_df['State/Territory'].str.lower() == state_strip]
+            print(f"After state filter: {len(filtered_df)} records")
+            if filtered_df.empty: return jsonify({"analysis": f"No data found for state: '{state}'. Available states might include: {', '.join(available_states[:10])}..."})
+
         available_counties = filtered_df['County Name'].unique().tolist() if not filtered_df.empty else []
         if county:
-            county_strip = county.lower().strip(); filtered_df = filtered_df[filtered_df['County Name'].str.lower() == county_strip]
-            if filtered_df.empty: return jsonify({"analysis": f"No data found for county: '{county}' in state '{state}'. Available: {', '.join(available_counties[:5])}..."})
+            county_strip = county.lower().strip()
+            # Use exact match for county after stripping
+            filtered_df = filtered_df[filtered_df['County Name'].str.lower() == county_strip]
+            print(f"After county filter: {len(filtered_df)} records")
+            if filtered_df.empty:
+                state_name = state if state else "the dataset"
+                county_list_str = f" Available counties in {state_name} might include: {', '.join(available_counties[:10])}..." if available_counties else ""
+                return jsonify({"analysis": f"No data found for county: '{county}' in {state_name}.{county_list_str}"})
+
         if tract_id:
-            tract_strip = tract_id.strip(); filtered_df = filtered_df[filtered_df['Census tract 2010 ID'] == tract_strip]
-            if filtered_df.empty: return jsonify({"analysis": f"No data found for Tract ID: '{tract_id}'."})
-        if filtered_df.empty: return jsonify({"analysis": "No data found matching filters."})
+            tract_strip = tract_id.strip()
+            filtered_df = filtered_df[filtered_df['Census tract 2010 ID'] == tract_strip]
+            print(f"After tract filter: {len(filtered_df)} records")
+
+        if filtered_df.empty:
+            return jsonify({"analysis": "No data found matching the specified filters."})
         # --- End Filtering ---
 
-        # --- Data Summarization (Expanded) ---
+
+        # --- Data Summarization ---
         num_tracts_found = len(filtered_df)
         print(f"Calculating summary stats for {num_tracts_found} tracts.")
-
-        # Define source column names from codebook
-        cols = {
-            "pop": 'Total population', "hisp": 'Percent Hispanic or Latino', "black": 'Percent Black or African American alone',
-            "white": 'Percent White', "disadv": 'Identified as disadvantaged', "lowinc_flag": 'Is low income?',
-            "thresh": 'Total threshold criteria exceeded', "pov200": 'Adjusted percent of individuals below 200% Federal Poverty Line',
-            "asthma": 'Current asthma among adults aged greater than or equal to 18 years',
-            "diabetes": 'Diagnosed diabetes among adults aged greater than or equal to 18 years',
-            "unemp": 'Unemployment (percent)', "energy": 'Energy burden', "housing_burden": 'Housing burden (percent)',
-            "pm25": 'PM2.5 in the air', "diesel": 'Diesel particulate matter exposure', "traffic": 'Traffic proximity and volume',
-            "hazwaste": 'Proximity to hazardous waste sites', "superfund": 'Proximity to NPL (Superfund) sites',
-            "rmp": 'Proximity to Risk Management Plan (RMP) facilities', "lead_paint": 'Percent pre-1960s housing (lead paint indicator)',
-            "wastewater": 'Wastewater discharge', "life_exp": 'Life expectancy (years)'
+        summary_stats = {
+            "Number of Census Tracts Found": num_tracts_found,
+            "Total Population (Sum)": None,
+            "Average Percent Hispanic or Latino": None,
+            "Average Percent Black or African American alone": None,
+            "Average Percent White": None,
+            "Number of Disadvantaged Tracts (Identified)": None,
+            "Number of Low Income Tracts": None,
+            "Average Total Threshold Criteria Exceeded": None,
+            "Average Percent Below 200% FPL": None,
+            "Average Percent With Asthma": None,
+            "Average Percent With Diabetes": None,
         }
 
-        summary_stats = {"Number of Census Tracts Found": num_tracts_found}
-
-        # Calculate stats, using helper function for averages
         if num_tracts_found > 0:
-            # Sums / Counts
-            if cols["pop"] in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[cols["pop"]]):
-                summary_stats["Total Population (Sum)"] = int(filtered_df[cols["pop"]].sum())
-            if cols["disadv"] in filtered_df.columns:
-                summary_stats["Number of Disadvantaged Tracts"] = int(filtered_df[cols["disadv"]].fillna(False).astype(bool).sum())
-            if cols["lowinc_flag"] in filtered_df.columns:
-                summary_stats["Number of Low Income Tracts"] = int(filtered_df[cols["lowinc_flag"]].fillna(False).astype(bool).sum())
+            # Define column names from dataset
+            pop_col = 'Total population'; hisp_col = 'Percent Hispanic or Latino'; black_col = 'Percent Black or African American alone'; white_col = 'Percent White'; disadv_col = 'Identified as disadvantaged'; lowinc_col = 'Is low income?'; thresh_col = 'Total threshold criteria exceeded'; pov_col = 'Adjusted percent of individuals below 200% Federal Poverty Line'; asthma_col = 'Current asthma among adults aged greater than or equal to 18 years'; diabetes_col = 'Diagnosed diabetes among adults aged greater than or equal to 18 years'
 
-            # Averages (Percentages converted to 0-100, others kept as is)
-            summary_stats["Avg Percent Hispanic or Latino"] = calculate_safe_average(filtered_df, cols["hisp"])
-            summary_stats["Avg Percent Black or African American"] = calculate_safe_average(filtered_df, cols["black"])
-            summary_stats["Avg Percent White"] = calculate_safe_average(filtered_df, cols["white"])
-            summary_stats["Avg Percent Below 200% FPL"] = calculate_safe_average(filtered_df, cols["pov200"])
-            summary_stats["Avg Unemployment Rate (%)"] = calculate_safe_average(filtered_df, cols["unemp"])
-            summary_stats["Avg Energy Burden (%)"] = calculate_safe_average(filtered_df, cols["energy"])
-            summary_stats["Avg Housing Burden (%)"] = calculate_safe_average(filtered_df, cols["housing_burden"])
-            summary_stats["Avg Percent Pre-1960s Housing (Lead Paint Proxy)"] = calculate_safe_average(filtered_df, cols["lead_paint"])
-            summary_stats["Avg PM2.5 Exposure (ug/m3)"] = calculate_safe_average(filtered_df, cols["pm25"], is_percentage=False)
-            summary_stats["Avg Diesel PM Exposure"] = calculate_safe_average(filtered_df, cols["diesel"], is_percentage=False)
-            summary_stats["Avg Traffic Proximity Score"] = calculate_safe_average(filtered_df, cols["traffic"], is_percentage=False)
-            summary_stats["Avg Proximity to HazWaste Sites Score"] = calculate_safe_average(filtered_df, cols["hazwaste"], is_percentage=False)
-            summary_stats["Avg Proximity to Superfund Sites Score"] = calculate_safe_average(filtered_df, cols["superfund"], is_percentage=False)
-            summary_stats["Avg Proximity to RMP Facilities Score"] = calculate_safe_average(filtered_df, cols["rmp"], is_percentage=False)
-            summary_stats["Avg Wastewater Discharge Score"] = calculate_safe_average(filtered_df, cols["wastewater"], is_percentage=False)
-            summary_stats["Avg Percent With Asthma"] = calculate_safe_average(filtered_df, cols["asthma"])
-            summary_stats["Avg Percent With Diabetes"] = calculate_safe_average(filtered_df, cols["diabetes"])
-            summary_stats["Avg Life Expectancy (Years)"] = calculate_safe_average(filtered_df, cols["life_exp"], is_percentage=False)
-            summary_stats["Avg Total Threshold Criteria Exceeded"] = calculate_safe_average(filtered_df, cols["thresh"], is_percentage=False)
+            # Sums / Counts (Handle NaNs)
+            if pop_col in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[pop_col]):
+                summary_stats["Total Population (Sum)"] = int(filtered_df[pop_col].sum())
+            if disadv_col in filtered_df.columns:
+                 summary_stats["Number of Disadvantaged Tracts (Identified)"] = int(filtered_df[disadv_col].fillna(False).astype(bool).sum())
+            if lowinc_col in filtered_df.columns:
+                 summary_stats["Number of Low Income Tracts"] = int(filtered_df[lowinc_col].fillna(False).astype(bool).sum())
 
-        # Filter out stats that are None
-        calculated_summary_stats = {k: v for k, v in summary_stats.items() if v is not None}
-        if not calculated_summary_stats or calculated_summary_stats.get("Number of Census Tracts Found", 0) == 0 :
-            return jsonify({"analysis": "Could not calculate valid summary statistics for the selected area."})
+            # Averages
+            stats_to_average = [
+                (hisp_col, "Average Percent Hispanic or Latino"), (black_col, "Average Percent Black or African American alone"),
+                (white_col, "Average Percent White"), (thresh_col, "Average Total Threshold Criteria Exceeded"),
+                (pov_col, "Average Percent Below 200% FPL"), (asthma_col, "Average Percent With Asthma"),
+                (diabetes_col, "Average Percent With Diabetes"),]
+
+            for col, key in stats_to_average:
+                if col in filtered_df.columns:
+                    if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                        valid_data = filtered_df[col].dropna()
+                        if not valid_data.empty:
+                            # Assume values are fractions (0-1) except for threshold count
+                            multiplier = 1 if 'Threshold' in key else 100
+                            avg = valid_data.mean()
+                            # Apply multiplier only if it makes sense (e.g., for percentages < 1)
+                            summary_stats[key] = round(avg * multiplier, 1) if multiplier == 1 or avg <= 1 else round(avg, 1)
+                    else: print(f"Warning: Column '{col}' not numeric.")
+                else: print(f"Warning: Column '{col}' not found.")
         # --- End Summarization ---
 
+        # Filter out stats that couldn't be calculated (are None)
+        calculated_summary_stats = {k: v for k, v in summary_stats.items() if v is not None}
+        if not calculated_summary_stats: # Handle edge case where no stats could be calculated
+             return jsonify({"analysis": "Could not calculate summary statistics for the selected area."})
 
-        # --- STEP 1: Analyze the User Query ---
+        # --- STEP 1: Analyze the User Query with an LLM ---
         print("--- Starting Step 1: Query Analysis ---")
-        available_data_concepts_str = f"""
-        - Basic Info: Number of Census Tracts Found, Total Population (Sum)
-        - Demographics: Avg Percent Hispanic or Latino, Avg Percent Black or African American, Avg Percent White
-        - Economic Status: Number of Disadvantaged Tracts, Number of Low Income Tracts, Avg Percent Below 200% FPL, Avg Unemployment Rate (%), Avg Energy Burden (%), Avg Housing Burden (%)
-        - Environmental Exposure: Avg PM2.5 Exposure (ug/m3), Avg Diesel PM Exposure, Avg Traffic Proximity Score
-        - Environmental/Legacy Sites: Avg Proximity to HazWaste Sites Score, Avg Proximity to Superfund Sites Score, Avg Proximity to RMP Facilities Score, Avg Wastewater Discharge Score, Avg Percent Pre-1960s Housing (Lead Paint Proxy)
-        - Health Outcomes: Avg Percent With Asthma, Avg Percent With Diabetes, Avg Life Expectancy (Years)
-        - Burden Score: Avg Total Threshold Criteria Exceeded
-        (Note: Proximity scores may need context; lower might mean closer/worse)
-        """
+        available_data_points = list(calculated_summary_stats.keys()) # Use only keys with calculated values
 
-        step1_system_prompt = f"""You are an expert query analysis assistant for US CEJST data. Your goal is to map the user query to the specific calculated summary statistics provided.
-Available Summary Statistics Concepts & (Exact Keys):
-{available_data_concepts_str}
+        # Refined Step 1 Prompt
+        step1_system_prompt = f"""You are an expert query analysis assistant for US census and environmental justice data. Analyze the user query to understand the core intent (action) and identify EXACTLY which of the strictly defined 'Available data points' are relevant.
+Available data points: {', '.join(available_data_points)}
 
-Mapping Guidelines:
-- Map common terms to the corresponding Exact Key (e.g., 'poverty' -> 'Avg Percent Below 200% FPL', 'asthma' -> 'Avg Percent With Asthma', 'air quality'/'pm2.5' -> 'Avg PM2.5 Exposure (ug/m3)', 'waste sites' -> 'Avg Proximity to HazWaste Sites Score', 'disadvantaged' -> 'Number of Disadvantaged Tracts').
-- If a query is general ('summarize', 'describe'), map to 'summarize' action and potentially include primary stats like population and demographics in relevant_fields.
-- If a query asks for data NOT reflected in the concepts above (e.g., 'education', 'crime', 'rent vs own'), set action to 'check_feasibility' and list the missing concept in 'unmatched_query_parts'.
+Mapping Guidelines & Examples:
+- **Demographics:** Map 'population'/'how many people'/'amount of people' to 'Total Population (Sum)'. Map ethnicity/race terms ('hispanic', 'latino', 'black', 'african american', 'white', etc.) to the corresponding 'Average Percent...' key.
+- **Disadvantage/Income:** Map 'disadvantaged'/'burdened' to 'Number of Disadvantaged Tracts (Identified)'. Map 'low income'/'poverty'/'Federal Poverty Line'/'FPL' to 'Number of Low Income Tracts' and/or 'Average Percent Below 200% FPL'. Map 'thresholds'/'criteria' to 'Average Total Threshold Criteria Exceeded'.
+- **Health:** Map 'asthma' to 'Average Percent With Asthma'. Map 'diabetes' to 'Average Percent With Diabetes'.
+- **General:** Map 'summarize'/'describe'/'overview'/'composition'/'makeup'/'size' to the action 'summarize'. If no specific field is mentioned, 'relevant_fields' can include primary fields like population and demographics.
 
 Output Instructions:
-- Output ONLY a valid JSON object: {{"action": "<action>", "relevant_fields": ["<Exact Key 1>", "<Exact Key 2>", ...], "unmatched_query_parts": ["<Missing Concept 1>", ...]}}
-- Use 'relevant_fields' for the EXACT keys corresponding to the query's core concepts.
-- Use 'unmatched_query_parts' ONLY for substantive data concepts that are genuinely unavailable in the list. Do NOT include common words (how, many, what, is, the, average, percent, people, of, rate, level, etc.) in unmatched_query_parts if the core concept *was* mapped.
+- Output ONLY a valid JSON object. Do not include any text before or after the JSON.
+- Use the following JSON structure:
+{{
+  "action": "<identified action e.g., summarize, list_value, compare, check_feasibility, unknown>",
+  "relevant_fields": ["<list of EXACT key names from Available data points that directly match the query's core concepts>"],
+  "unmatched_query_parts": ["<list ONLY substantive concepts from the query that have NO corresponding Available data point>"]
+}}
+- **Crucially:** Do NOT put common words (like 'how many', 'percentage of', 'people', 'rate', 'level', 'amount', 'of', 'in', 'as', 'opposed', 'to', 'have') in 'unmatched_query_parts' if the main data concept *was* successfully mapped to a 'relevant_field'. Only list concepts representing *data types* that are genuinely unavailable in the provided list.
+- If the query asks for something clearly unavailable (e.g., 'education levels', 'crime rates', 'rent vs own'), set action to 'check_feasibility' and list the concept in 'unmatched_query_parts'.
 """
         step1_user_content = f"Analyze this user query: \"{user_query}\""
 
-        query_analysis = {"action": "summarize", "relevant_fields": [], "unmatched_query_parts": ["Query analysis failed (default)"]}
+        query_analysis = {"action": "summarize", "relevant_fields": [], "unmatched_query_parts": ["Query analysis failed (default)"]} # Default fallback
         try:
             step1_completion = client.chat.completions.create(
-                model="gpt-3.5-turbo", messages=[ {"role": "system", "content": step1_system_prompt}, {"role": "user", "content": step1_user_content}],
-                temperature=0.0, max_tokens=200, response_format={"type": "json_object"} )
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": step1_system_prompt},
+                    {"role": "user", "content": step1_user_content}
+                ],
+                temperature=0.0,
+                max_tokens=150,
+                response_format={"type": "json_object"}
+            )
             step1_result_str = step1_completion.choices[0].message.content
             print(f"Step 1 Raw Result: {step1_result_str}")
             query_analysis = json.loads(step1_result_str)
             print(f"Step 1 Parsed Analysis: {query_analysis}")
-        except Exception as e: print(f"Error during Step 1 API call: {e}")
+
+        except Exception as e:
+            print(f"Error during Step 1 (Query Analysis) API call: {e}")
+            # Keep default fallback if API call fails
 
         # --- Check Feasibility / Prepare for Step 2 ---
         action = query_analysis.get("action", "unknown")
         unmatched = query_analysis.get("unmatched_query_parts", [])
         relevant = query_analysis.get("relevant_fields", [])
 
-        # Refined check: Stop only if action is clearly 'check_feasibility' or if the LLM truly couldn't map anything relevant.
-        if action == "check_feasibility" or (unmatched and not relevant and action == "unknown"):
+        # Refined check: Stop only if action is explicitly check_feasibility
+        # OR if the LLM indicates it doesn't know the action AND found unmatched parts it couldn't resolve.
+        if action == "check_feasibility" or (action == "unknown" and unmatched):
             missing_parts = unmatched if unmatched else ["unknown concepts"]
             analysis_result = f"Specific data for '{', '.join(missing_parts)}' needed for your query is not available in the calculated summary statistics."
-            print("Step 1 indicated query requires unavailable data or failed mapping. Returning message.")
+            print("Step 1 indicated query requires unavailable data OR action unknown with unmatched parts. Returning message.")
             return jsonify({"analysis": analysis_result})
 
         # --- STEP 2: Perform Data Analysis ---
         print("--- Starting Step 2: Data Analysis ---")
 
-        # Select stats to send: relevant ones if identified, otherwise all calculated stats
-        final_summary_stats_to_send = calculated_summary_stats
+        # Decide which stats to send: relevant ones if found, otherwise all calculated stats
+        final_summary_stats_to_send = calculated_summary_stats # Default to all calculated stats
         if relevant:
-            filtered_relevant_keys = [f for f in relevant if f in calculated_summary_stats]
-            if filtered_relevant_keys:
-                final_summary_stats_to_send = {k: calculated_summary_stats[k] for k in filtered_relevant_keys}
-                # Always add tract count and population sum if available and not already included
-                if "Number of Census Tracts Found" in calculated_summary_stats: final_summary_stats_to_send["Number of Census Tracts Found"] = calculated_summary_stats["Number of Census Tracts Found"]
-                if "Total Population (Sum)" in calculated_summary_stats: final_summary_stats_to_send["Total Population (Sum)"] = calculated_summary_stats["Total Population (Sum)"]
+             # Ensure we only select keys that were actually calculated
+             filtered_relevant = [f for f in relevant if f in calculated_summary_stats]
+             if filtered_relevant: # If any relevant fields were successfully calculated
+                 # Include relevant fields + always include count
+                 final_summary_stats_to_send = {k: v for k, v in calculated_summary_stats.items() if k in filtered_relevant or k == "Number of Census Tracts Found"}
+             # If 'relevant' fields were specified but none were actually calculable, fall back to sending all calculable stats.
+             elif not calculated_summary_stats:
+                  return jsonify({"analysis": "Could not calculate any summary statistics for the selected area, unable to proceed."})
+
 
         final_summary_data_string = json.dumps(final_summary_stats_to_send, indent=2)
 
         # Step 2 System Prompt (remains the same)
-        step2_system_prompt = """You are an AI assistant analyzing US Census tract data summaries. Provide a concise summary addressing the user's query based *only* on the provided summary statistics. Do NOT list individual census tracts. State results directly without introductory phrases. If the statistics don't directly answer, state that based *only* on the provided stats. Format as a short paragraph or bullet points."""
+        step2_system_prompt = """You are an AI assistant analyzing US Census tract data summaries.
+        - Provide a concise summary addressing the user's query based *only* on the provided summary statistics for the specified location.
+        - Do NOT list individual census tracts.
+        - State results directly. Do not use introductory phrases like "Based on the data..." or "The data shows...".
+        - If the query asks about something not present in the summary statistics, state "Specific data for that query is not available in the summary."
+        - Keep the response brief and focused on the overall area described by the statistics.
+        - Format the output as a short paragraph or bullet points.
+        """
 
         location_name = tract_id if tract_id else (county if county else (state if state else "Selected Area"))
-        action_verb = query_analysis.get("action", "summarize")
+        action_verb = query_analysis.get("action", "summarize") # Use identified action, default to summarize
 
-        # Step 2 User Content (Include original query for context)
-        step2_user_content = f"""Location Context: {location_name} ({state if state else ''}{', '+county if county else ''})
-User Query: "{user_query}"
-Identified Action: {action_verb}
-Identified Relevant Fields by Step 1: {json.dumps(relevant)}
+        # Step 2 User Content
+        step2_user_content = f"""
+        Analysis Request:
+        Location: {location_name} ({state if state else ''}{', '+county if county else ''})
+        User Query: "{user_query}"
+        Identified Action: {action_verb}
+        Identified Relevant Fields by Step 1: {json.dumps(relevant)}
 
-Available Summary Statistics for Analysis:
-{final_summary_data_string}
+        Summary Statistics Provided for Analysis:
+        {final_summary_data_string}
 
-Task: Provide a concise response answering the User Query for the Location Context using ONLY the Available Summary Statistics. Follow system prompt instructions strictly."""
+        Provide a concise response answering the User Query for the Location based on the statistics provided and the Identified Action. Do not list individual tracts. If the statistics don't directly support the query, explain briefly based *only* on the provided stats.
+        """
 
         print(f"Sending summarized prompt for Step 2 to OpenAI (User Content Length: {len(step2_user_content)} chars)")
 
         step2_completion = client.chat.completions.create(
-            model="gpt-4o-mini", # Using a potentially slightly more capable/recent model
-            messages=[ {"role": "system", "content": step2_system_prompt}, {"role": "user", "content": step2_user_content}],
-            temperature=0.2, max_tokens=400 )
+            model="gpt-3.5-turbo", # Consider GPT-4 for potentially better analysis
+            messages=[
+                {"role": "system", "content": step2_system_prompt},
+                {"role": "user", "content": step2_user_content}
+            ],
+            temperature=0.2,
+            max_tokens=350 # Slightly increased token limit for potentially more nuanced answers
+        )
 
         analysis_result = step2_completion.choices[0].message.content
         print("Received analysis from OpenAI (Step 2).")
         return jsonify({"analysis": analysis_result})
 
-    # Main exception handler
+    # Main exception handler for the entire route
     except Exception as e:
         print(f"--- ERROR in /analyze route ---")
-        traceback.print_exc()
+        traceback.print_exc() # Print detailed traceback to Flask console
         return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
+
 
 # --- Run App ---
 if __name__ == '__main__':
+    # The app.run() block should only appear once at the end
     print("Starting Flask server...")
-    app.run(debug=True)
+    app.run(debug=True) # debug=True enables auto-reloading and debugger
