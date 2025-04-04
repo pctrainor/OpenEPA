@@ -7,29 +7,38 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+    <div class="banner">
+        <div class="banner-content">
+            <div class="earth-container">
+                <img src="{{ url_for('static', filename='images/earth.jpg') }}" alt="Earth" class="earth-image">
+            </div>
+            <h1>Climate & Economic Justice Analysis</h1>
+        </div>
+    </div>
+
     <div class="container">
-        <h1>Climate and Economic Justice Screening Tool Analysis</h1>
-        
         <form id="analysis-form">
-            <div class="form-group">
-                <label for="state">State/Territory:</label>
-                <input type="text" id="state" name="state" placeholder="e.g., Alabama">
-            </div>
-            
-            <div class="form-group">
-                <label for="county">County:</label>
-                <input type="text" id="county" name="county" placeholder="e.g., Autauga County">
-            </div>
-            
-            <div class="form-group">
-                <label for="tract-id">Census Tract ID:</label>
-                <input type="text" id="tract-id" name="tract-id" placeholder="e.g., 01001020100">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="state">State/Territory:</label>
+                    <input type="text" id="state" name="state" placeholder="e.g., Alabama">
+                </div>
+                
+                <div class="form-group">
+                    <label for="county">County:</label>
+                    <input type="text" id="county" name="county" placeholder="e.g., Autauga County">
+                </div>
+                
+                <div class="form-group">
+                    <label for="tract-id">Census Tract ID:</label>
+                    <input type="text" id="tract-id" name="tract-id" placeholder="e.g., 01001020100">
+                </div>
             </div>
             
             <div class="form-group">
                 <label for="query">Analysis Query:</label>
-                <textarea id="query" name="query" rows="4" required 
-                    placeholder="What would you like to know about this data? e.g., 'Analyze the disadvantaged status of this community'"></textarea>
+                <textarea id="query" name="query" rows="3" required 
+                    placeholder="What would you like to know? e.g., 'Analyze the disadvantaged status'"></textarea>
             </div>
             
             <button type="submit">Analyze Data</button>
