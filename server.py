@@ -1,12 +1,46 @@
 import os
 import pandas as pd
-import io
 from flask import Flask, request, jsonify, render_template
 from openai import OpenAI
 from dotenv import load_dotenv
 import json
-import traceback # Import traceback for better error logging
-import re # Import regex for potentially filtering common words
+import traceback
+import datetime  # For timestamping logs
+
+# Logging function for queries and responses
+def log_query_response(query_data, query_analysis, response, num_records, error=None):
+    """Log query and response data to a file for training purposes"""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
+    
+    # Create logs directory if it doesn't exist
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+        print(f"Created logs directory at {logs_dir}")
+    
+    # Use current date in filename for easier management
+    log_file = os.path.join(logs_dir, f'query_logs_{datetime.datetime.now().strftime("%Y%m%d")}.jsonl')
+    
+    # Create a log entry as JSON
+    log_entry = {
+        "timestamp": timestamp,
+        "state": query_data.get('state', ''),
+        "county": query_data.get('county', ''),
+        "tract_id": query_data.get('tract_id', ''),
+        "user_query": query_data.get('query', ''),
+        "records_found": num_records,
+        "query_analysis": query_analysis,
+        "response": response,
+        "error": error
+    }
+    
+    # Append to log file
+    try:
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(log_entry) + '\n')
+        print(f"Query logged to {log_file}")
+    except Exception as e:
+        print(f"ERROR: Failed to write to log file: {e}")
 
 # Load environment variables
 load_dotenv()
@@ -58,11 +92,16 @@ def analyze():
     3. Uses Step 1 LLM call to analyze the user query intent and map to available stats.
     4. Uses Step 2 LLM call to generate a concise analysis based on query intent and stats.
     """
-    # Initial checks
+    # Initial error checking
     if df is None or df.empty:
-        return jsonify({"error": "Dataset not loaded or empty on server. Check server logs."}), 500
+        error_msg = "Dataset not loaded on server."
+        log_query_response(request.get_json() or {}, {}, error_msg, 0, error=error_msg)
+        return jsonify({"error": error_msg}), 500
+    
     if not client:
-        return jsonify({"error": "OpenAI client not configured on server. Check server logs."}), 500
+        error_msg = "OpenAI client not configured on server."
+        log_query_response(request.get_json() or {}, {}, error_msg, 0, error=error_msg)
+        return jsonify({"error": error_msg}), 500
 
     try:
         request_data = request.get_json()
@@ -75,7 +114,9 @@ def analyze():
         user_query = request_data.get('query')
 
         if not user_query:
-            return jsonify({"error": "User query cannot be empty."}), 400
+            error_msg = "User query cannot be empty."
+            log_query_response(request_data, {}, error_msg, 0, error=error_msg)
+            return jsonify({"error": error_msg}), 400
 
         # --- Filtering Logic ---
         print(f"Starting filtering with state='{state}', county='{county}', tract_id='{tract_id}'")
@@ -86,18 +127,22 @@ def analyze():
             state_strip = state.lower().strip()
             filtered_df = filtered_df[filtered_df['State/Territory'].str.lower() == state_strip]
             print(f"After state filter: {len(filtered_df)} records")
-            if filtered_df.empty: return jsonify({"analysis": f"No data found for state: '{state}'. Available states might include: {', '.join(available_states[:10])}..."})
+            if filtered_df.empty: 
+                msg = f"No data found for state: '{state}'. Available states might include: {', '.join(available_states[:10])}..."
+                log_query_response(request_data, {}, msg, 0)
+                return jsonify({"analysis": msg})
 
         available_counties = filtered_df['County Name'].unique().tolist() if not filtered_df.empty else []
         if county:
             county_strip = county.lower().strip()
-            # Use exact match for county after stripping
             filtered_df = filtered_df[filtered_df['County Name'].str.lower() == county_strip]
             print(f"After county filter: {len(filtered_df)} records")
             if filtered_df.empty:
                 state_name = state if state else "the dataset"
                 county_list_str = f" Available counties in {state_name} might include: {', '.join(available_counties[:10])}..." if available_counties else ""
-                return jsonify({"analysis": f"No data found for county: '{county}' in {state_name}.{county_list_str}"})
+                msg = f"No data found for county: '{county}' in {state_name}.{county_list_str}"
+                log_query_response(request_data, {}, msg, 0)
+                return jsonify({"analysis": msg})
 
         if tract_id:
             tract_strip = tract_id.strip()
@@ -105,9 +150,9 @@ def analyze():
             print(f"After tract filter: {len(filtered_df)} records")
 
         if filtered_df.empty:
-            return jsonify({"analysis": "No data found matching the specified filters."})
-        # --- End Filtering ---
-
+            msg = "No data found matching the specified filters."
+            log_query_response(request_data, {}, msg, 0)
+            return jsonify({"analysis": msg})
 
         # --- Data Summarization ---
         num_tracts_found = len(filtered_df)
@@ -150,25 +195,23 @@ def analyze():
                     if pd.api.types.is_numeric_dtype(filtered_df[col]):
                         valid_data = filtered_df[col].dropna()
                         if not valid_data.empty:
-                            # Assume values are fractions (0-1) except for threshold count
                             multiplier = 1 if 'Threshold' in key else 100
                             avg = valid_data.mean()
-                            # Apply multiplier only if it makes sense (e.g., for percentages < 1)
                             summary_stats[key] = round(avg * multiplier, 1) if multiplier == 1 or avg <= 1 else round(avg, 1)
                     else: print(f"Warning: Column '{col}' not numeric.")
                 else: print(f"Warning: Column '{col}' not found.")
-        # --- End Summarization ---
 
         # Filter out stats that couldn't be calculated (are None)
         calculated_summary_stats = {k: v for k, v in summary_stats.items() if v is not None}
-        if not calculated_summary_stats: # Handle edge case where no stats could be calculated
-             return jsonify({"analysis": "Could not calculate summary statistics for the selected area."})
+        if not calculated_summary_stats:
+             msg = "Could not calculate summary statistics for the selected area."
+             log_query_response(request_data, {}, msg, 0)
+             return jsonify({"analysis": msg})
 
         # --- STEP 1: Analyze the User Query with an LLM ---
         print("--- Starting Step 1: Query Analysis ---")
-        available_data_points = list(calculated_summary_stats.keys()) # Use only keys with calculated values
+        available_data_points = list(calculated_summary_stats.keys())
 
-        # Refined Step 1 Prompt
         step1_system_prompt = f"""You are an expert query analysis assistant for US census and environmental justice data. Analyze the user query to understand the core intent (action) and identify EXACTLY which of the strictly defined 'Available data points' are relevant.
 Available data points: {', '.join(available_data_points)}
 
@@ -191,7 +234,7 @@ Output Instructions:
 """
         step1_user_content = f"Analyze this user query: \"{user_query}\""
 
-        query_analysis = {"action": "summarize", "relevant_fields": [], "unmatched_query_parts": ["Query analysis failed (default)"]} # Default fallback
+        query_analysis = {"action": "summarize", "relevant_fields": [], "unmatched_query_parts": ["Query analysis failed (default)"]}
         try:
             step1_completion = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -210,40 +253,36 @@ Output Instructions:
 
         except Exception as e:
             print(f"Error during Step 1 (Query Analysis) API call: {e}")
-            # Keep default fallback if API call fails
 
         # --- Check Feasibility / Prepare for Step 2 ---
         action = query_analysis.get("action", "unknown")
         unmatched = query_analysis.get("unmatched_query_parts", [])
         relevant = query_analysis.get("relevant_fields", [])
 
-        # Refined check: Stop only if action is explicitly check_feasibility
-        # OR if the LLM indicates it doesn't know the action AND found unmatched parts it couldn't resolve.
         if action == "check_feasibility" or (action == "unknown" and unmatched):
             missing_parts = unmatched if unmatched else ["unknown concepts"]
             analysis_result = f"Specific data for '{', '.join(missing_parts)}' needed for your query is not available in the calculated summary statistics."
             print("Step 1 indicated query requires unavailable data OR action unknown with unmatched parts. Returning message.")
+            log_query_response(request_data, query_analysis, analysis_result, num_tracts_found)
             return jsonify({"analysis": analysis_result})
 
         # --- STEP 2: Perform Data Analysis ---
         print("--- Starting Step 2: Data Analysis ---")
 
         # Decide which stats to send: relevant ones if found, otherwise all calculated stats
-        final_summary_stats_to_send = calculated_summary_stats # Default to all calculated stats
+        final_summary_stats_to_send = calculated_summary_stats
         if relevant:
-             # Ensure we only select keys that were actually calculated
              filtered_relevant = [f for f in relevant if f in calculated_summary_stats]
-             if filtered_relevant: # If any relevant fields were successfully calculated
-                 # Include relevant fields + always include count
+             if filtered_relevant:
                  final_summary_stats_to_send = {k: v for k, v in calculated_summary_stats.items() if k in filtered_relevant or k == "Number of Census Tracts Found"}
-             # If 'relevant' fields were specified but none were actually calculable, fall back to sending all calculable stats.
              elif not calculated_summary_stats:
-                  return jsonify({"analysis": "Could not calculate any summary statistics for the selected area, unable to proceed."})
-
+                  msg = "Could not calculate any summary statistics for the selected area, unable to proceed."
+                  log_query_response(request_data, query_analysis, msg, num_tracts_found)
+                  return jsonify({"analysis": msg})
 
         final_summary_data_string = json.dumps(final_summary_stats_to_send, indent=2)
 
-        # Step 2 System Prompt (remains the same)
+        # Step 2 System Prompt
         step2_system_prompt = """You are an AI assistant analyzing US Census tract data summaries.
         - Provide a concise summary addressing the user's query based *only* on the provided summary statistics for the specified location.
         - Do NOT list individual census tracts.
@@ -254,7 +293,7 @@ Output Instructions:
         """
 
         location_name = tract_id if tract_id else (county if county else (state if state else "Selected Area"))
-        action_verb = query_analysis.get("action", "summarize") # Use identified action, default to summarize
+        action_verb = query_analysis.get("action", "summarize")
 
         # Step 2 User Content
         step2_user_content = f"""
@@ -273,28 +312,35 @@ Output Instructions:
         print(f"Sending summarized prompt for Step 2 to OpenAI (User Content Length: {len(step2_user_content)} chars)")
 
         step2_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # Consider GPT-4 for potentially better analysis
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": step2_system_prompt},
                 {"role": "user", "content": step2_user_content}
             ],
             temperature=0.2,
-            max_tokens=350 # Slightly increased token limit for potentially more nuanced answers
+            max_tokens=350
         )
 
         analysis_result = step2_completion.choices[0].message.content
         print("Received analysis from OpenAI (Step 2).")
+        
+        # Log the successful interaction
+        log_query_response(
+            request_data, 
+            query_analysis, 
+            analysis_result, 
+            num_tracts_found
+        )
+        
         return jsonify({"analysis": analysis_result})
 
-    # Main exception handler for the entire route
     except Exception as e:
         print(f"--- ERROR in /analyze route ---")
-        traceback.print_exc() # Print detailed traceback to Flask console
-        return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
+        traceback.print_exc()
+        error_msg = f"An unexpected server error occurred: {str(e)}"
+        log_query_response(request.get_json() or {}, {}, "", 0, error=error_msg)
+        return jsonify({"error": error_msg}), 500
 
-
-# --- Run App ---
 if __name__ == '__main__':
-    # The app.run() block should only appear once at the end
     print("Starting Flask server...")
-    app.run(debug=True) # debug=True enables auto-reloading and debugger
+    app.run(debug=True)
