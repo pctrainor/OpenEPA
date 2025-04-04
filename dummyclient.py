@@ -65,7 +65,8 @@ def generate_state_county_pairs():
     except Exception as e:
         print(f"Error generating state/county pairs: {e}")
         # Return the original hardcoded list as fallback
-        return SAMPLE_LOCATIONS
+        # Return empty list as fallback
+        return []
 
 # --- Use us library to get state/county pairs ---
 STATE_COUNTY_PAIRS = generate_state_county_pairs()
