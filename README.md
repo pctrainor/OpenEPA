@@ -13,7 +13,7 @@ However, navigating and interpreting the raw CEJST dataset, often distributed as
 OpenEPA democratizes access to insights within the CEJST data by providing a user-friendly web application. Users can:
 
 1.  **Specify a Location:** Filter data down to a specific State, County, or even an individual Census Tract ID.
-2.  **Ask Questions Naturally:** Input queries in plain English (e.g., "Summarize the key demographics," "How many tracts are considered disadvantaged?", "What's the average poverty level?").
+2.  **Ask Questions Naturally:** Input queries in plain English (e.g., "Summarize the key demographics," "How many tracts are considered disadvantaged?", "is this area poor?"). Utilizing the data dictionary csv (2.0-cookbook.csv) to get a feel for the variables and how they can be used is a helpful way to prep your questions for the prompt.
 3.  **Get AI-Powered Summaries:** The application processes the query, retrieves relevant summary statistics for the selected area, and uses an AI model (via the OpenAI API) to generate a direct, concise answer, translating complex data into understandable insights.
 
 This approach avoids overwhelming users with raw data tables or requiring complex analysis steps.
