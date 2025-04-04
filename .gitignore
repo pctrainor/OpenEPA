@@ -176,3 +176,4 @@ cython_debug/
 
 # Query logs
 query_log.csv
+query_logs_20250403.jsonl
