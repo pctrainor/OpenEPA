@@ -177,3 +177,31 @@ cython_debug/
 # Query logs
 query_log.csv
 query_logs_20250403.jsonl
+
+# Log files
+*.log
+logs/
+log_exports/
+*_logs_*.csv
+*_logs_*.json
+*_logs_*.jsonl
+*_logs_*.xlsx
+*_logs_*.xls
+client_results_log.csv
+
+# Cost tracking files
+cost_summary_*.csv
+
+# Other common files to ignore
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.DS_Store
+client_results_log.csv
