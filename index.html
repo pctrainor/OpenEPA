@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenEPA - CEJST Data Analysis Tool</title>
+    <style>
+        :root {
+            --primary-color: #4b4747;
+            --secondary-color: #48BB78; /* A nice green */
+            --background-color: #272525; /* Dark background */
+            --text-color: #ffffff;       /* White text */
+            --card-background: #1a1a1a; /* Slightly lighter dark for cards */
+            --card-border-top-color: var(--secondary-color); /* Use secondary color for border */
+            --separator-color: #000000; /* Black for the separator */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--background-color);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px; /* Default padding */
+        }
+
+        header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 0.8rem 0; /* Reduced padding for smaller header */
+        }
+
+        header h1 {
+             font-size: 1.5rem; /* Reduced font size for header */
+             text-align: center; /* Ensure it stays centered */
+        }
+
+        /* Style for the separator bar */
+        .separator {
+            height: 2px; /* Thickness of the bar */
+            background-color: var(--separator-color);
+            width: 100%; /* Full width */
+        }
+
+        .hero {
+            text-align: center;
+            padding: 3rem 0; /* Adjusted padding */
+        }
+
+        .hero h1 {
+            font-size: 2.2rem; /* Adjusted size */
+            margin-bottom: 1rem;
+            line-height: 1.3;
+        }
+
+        .hero p {
+            font-size: 1.1rem; /* Adjusted size */
+            margin-bottom: 2rem;
+            max-width: 600px; /* Constrain width for readability */
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Slightly smaller min */
+            gap: 1.5rem; /* Adjusted gap */
+            padding: 2rem 0; /* Reduced vertical padding, NO horizontal padding here */
+            justify-items: center; /* Center items within their grid cell */
+        }
+
+        .feature-card {
+            background: var(--card-background);
+            padding: 1.5rem; /* Adjusted padding */
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2); /* Slightly enhanced shadow */
+            transition: transform 0.3s ease, box-shadow 0.3s ease; /* Smoother transition */
+            text-align: center;
+            width: 100%; /* Take full width of grid cell */
+            max-width: 350px; /* Max width per card */
+            border-top: 4px solid var(--card-border-top-color); /* Added decorative border */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .feature-card:hover {
+             transform: translateY(-5px); /* Slightly more lift */
+             box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+        }
+
+         .feature-card h3 {
+            color: var(--secondary-color); /* Use accent color for heading */
+            margin-bottom: 0.75rem;
+         }
+
+         .feature-card p {
+            font-size: 0.95rem; /* Slightly adjusted size */
+            flex-grow: 1; /* Allows paragraphs to take space if needed */
+         }
+
+
+        .cta-button {
+            display: inline-block; /* Correct display for padding/margin */
+            background-color: var(--secondary-color);
+            color: #000000; /* Black text for contrast on green */
+            padding: 0.8rem 1.8rem; /* Adjusted padding */
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: transform 0.3s ease, background-color 0.3s ease; /* Added background transition */
+            margin-top: auto; /* Pushes button to bottom if card heights vary */
+        }
+
+        .cta-button:hover {
+            transform: translateY(-3px); /* Slightly more lift */
+            background-color: #36a166; /* Darker shade on hover */
+        }
+
+         /* Mobile adjustments */
+         @media (max-width: 768px) {
+            .container {
+                padding: 0 15px; /* Less padding on mobile */
+            }
+
+            header h1 {
+                font-size: 1.3rem; /* Further reduce header size on mobile */
+            }
+
+            .hero h1 {
+                font-size: 1.rem;
+            }
+
+            .hero p {
+                font-size: 1rem;
+            }
+
+            /* Key Fix: Reduce padding on features section for mobile */
+            .features {
+                 padding: 2rem 0; /* Keep vertical, remove horizontal */
+                 gap: 1rem;
+            }
+
+             .feature-card {
+                 padding: 1rem; /* Smaller padding inside cards */
+             }
+        }
+
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>OpenEPA</h1>
+        </div>
+    </header>
+
+    <div class="separator"></div>
+
+    <main>
+        <section class="hero container">
+            <h1>Democratizing Access to Environmental Justice Data</h1>
+            <p>Query CEJST data using natural language and receive clear, AI-driven analyses</p>
+            <a href="https://github.com/pctrainor/OpenEPA" class="cta-button">View Project on GitHub</a>
+        </section>
+
+        <section class="features container">
+            <div class="feature-card">
+                <h3>Natural Language Queries</h3>
+                <p>Ask questions in plain English about environmental justice data in your area.</p>
+            </div>
+            <div class="feature-card">
+                <h3>AI-Powered Analysis</h3>
+                <p>Get instant, clear insights from complex CEJST datasets.</p>
+            </div>
+            <div class="feature-card">
+                <h3>Location-Based Filtering</h3>
+                <p>Filter data by State, County, or Census Tract ID for targeted analysis.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer style="text-align: center; padding: 2rem 0; margin-top: 2rem; color: #aaa; font-size: 0.9rem;">
+        <p>&copy; 2025 OpenEPA Project. All rights reserved.</p>
+    </footer>
+
+</body>
+</html>
